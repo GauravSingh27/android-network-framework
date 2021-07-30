@@ -8,11 +8,12 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.HttpURLConnection.HTTP_OK
 import java.net.URL
+import java.net.URLEncoder
 import java.nio.charset.Charset
 import javax.net.ssl.HttpsURLConnection
 
 
-inline fun <reified T> Request.execute(
+fun <T> Request.execute(
     parser: (String) -> T,
     connectionProvider: (url: String) -> HttpURLConnection = ::getConnection,
     noinline predicate: (() -> Boolean)? =
@@ -29,7 +30,7 @@ inline fun <reified T> Request.execute(
         if (predicate == null || predicate()) {
 
             beforeConnectionAction?.invoke()
-            connectionProvider(baseUrl + endPoint).let { connection ->
+            connectionProvider(makeUrl(this)).let { connection ->
                 try {
                     connection.configure(this)
 
@@ -72,7 +73,19 @@ inline fun <reified T> Request.execute(
     }
 }
 
-private fun isSecure(url: String) = url.contains("https")
+private fun makeUrl(request: Request): String {
+    return request.baseUrl + request.endPoint + encodeUrlQueryParams(request)
+}
+
+private fun encodeUrlQueryParams(request: Request): String {
+    var encodedUrlParams = ""
+    request.urlQueryParameters?.entries?.forEachIndexed { index, entry ->
+        val key = if (index == 0) "?${entry.key}" else "&${entry.key}"
+        encodedUrlParams =
+            encodedUrlParams + key + URLEncoder.encode(entry.value, request.charset.name())
+    }
+    return encodedUrlParams
+}
 
 private fun doOutput(request: Request) =
     request.postRequestBody != null || request.urlQueryParameters != null
@@ -82,39 +95,21 @@ private fun HttpURLConnection.addHeaders(request: Request) {
     request.additionalHeaders?.forEach { setRequestProperty(it.key, it.value) }
 }
 
-private fun HttpURLConnection.encodeUrlParameters(request: Request) {
-    request.urlQueryParameters?.takeUnless { it.isEmpty() }?.let { params ->
-        val uriBuilder = Uri.Builder()
-        params.forEach { uriBuilder.appendQueryParameter(it.key, it.value) }
-        val uriString = uriBuilder.build().toString()
-        DataOutputStream(outputStream).use { it.write(uriString.toByteArray(request.charset)) }
-    }
-}
+private fun getConnection(url: String) = URL(url).openConnection()
 
-@PublishedApi
-internal fun getConnection(url: String) = if (isSecure(url)) {
-    URL(url).openConnection() as HttpsURLConnection
-} else {
-    URL(url).openConnection() as HttpURLConnection
-}
-
-@PublishedApi
-internal fun HttpURLConnection.configure(request: Request) {
+private fun HttpURLConnection.configure(request: Request) {
     readTimeout = ConnectionConfig.readTimeOut
     connectTimeout = ConnectionConfig.connectTimeOut
     requestMethod = request.type.value
     doOutput = doOutput(request)
     addHeaders(request)
-    encodeUrlParameters(request)
 }
 
-@PublishedApi
-internal fun HttpURLConnection.readStream(charset: Charset): String {
+private fun HttpURLConnection.readStream(charset: Charset): String {
     return inputStream.bufferedReader(charset).use(BufferedReader::readText)
 }
 
-@PublishedApi
-internal fun HttpURLConnection.writeStream(request: Request) {
+private fun HttpURLConnection.writeStream(request: Request) {
     request.postRequestBody?.let { data ->
         outputStream.bufferedWriter(request.charset).use {
             it.write(data.toString())
@@ -123,8 +118,7 @@ internal fun HttpURLConnection.writeStream(request: Request) {
     }
 }
 
-@PublishedApi
-internal fun HttpURLConnection.readErrorStream(charset: Charset): String {
+private fun HttpURLConnection.readErrorStream(charset: Charset): String {
     return errorStream?.bufferedReader(charset)?.use(BufferedReader::readText)
         ?: responseMessage.orEmpty()
 }
