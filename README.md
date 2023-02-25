@@ -1,3 +1,3 @@
 # android-network-framework
 
-Android network library using HttpUrlConnection
+Android network library using HttpUrlConnection.
